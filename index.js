@@ -2,6 +2,19 @@
 const moment = require("moment");
 const readline = require("readline-sync");
 const fs = require("fs");
+const log4js = require("log4js");
+
+log4js.configure({
+    appenders: {
+        file: {type: 'fileSync', filename: 'debug.log'}
+    },
+    categories: {
+        default: {appenders: ['file'], level: 'debug'}
+    }
+});
+
+const logger = log4js.getLogger("SupportBank");
+logger.info("Started program.");
 
 let accounts; // name: Account(name, amount, transactions)     => can find people by name easily
 let transactions;
@@ -44,34 +57,57 @@ function parse_CSV(filename) {
     accounts = {};
     transactions = [];
 
-    let data = fs.readFileSync(filename, "utf-8").trim();
+    let data = fs.readFileSync(filename, "utf-8").trim().split("\n");
+    let values = data[0].split(",");
 
-    let values = data.split("\n", 1)[0].split(",");
-    for (let line of data.split("\n").slice(1)) {
+    for (let line_counter = 1; line_counter < data.length; line_counter++) {
+        let line = data[line_counter];
+        
         // Parse CSV to transaction
         let transaction = {};
-        for (let counter = 0; counter < values.length; counter++) {
-            transaction[values[counter]] = line.split(",")[counter];
+        for (let row_counter = 0; row_counter < values.length; row_counter++) {
+            transaction[values[row_counter]] = line.split(",")[row_counter];
         }
 
-        // Parse transaction to Accounts / Transactions variables
-        let date = moment(transaction["Date"], "DD-MM-YYYY").format("YYYY-MM-DD");
+        // Parse transaction to Accounts / Transactions global variables
+        let date = moment(transaction["Date"], "DD-MM-YYYY");
         let from = make_account(transaction["From"]);
         let to = make_account(transaction["To"]);
         let amount = parseFloat(transaction["Amount"]);
         let narrative = transaction["Narrative"];
 
+        // Test for validity (log if not)
+
+        if (!date.isValid()) {
+            let message = "Invalid date: " + date + " (line " + (line_counter + 1) + "). Removing the date.";
+            logger.error(message);
+            console.log("Error in CSV file. " + message);
+            date = "No date listed.";
+        } else {
+            date = date.format("YYYY-MM-DD");
+        }
+
+        if (isNaN(amount) || amount < 0) {
+            let message = "Invalid amount: " + amount + " (line " + (line_counter + 1) + "). Setting to 0.";
+            logger.error(message);
+            console.log("Error in CSV file. " + message);
+            amount = 0;
+        }
+
         transactions.push(new Transaction(date, from, to, amount, narrative));
+
     }
 }
 
 // Main program
-parse_CSV("Transactions2014.csv");
+logger.info("Started parsing CSV.");
+parse_CSV("DodgyTransactions2015.csv");
+logger.info("Finished parsing CSV.");
 
 let user_input = " ";
 console.log("Usage: 'List <Account>' or 'List All' or enter a blank string to exit.");
 while (true) {
-    user_input = readline.question("> ");
+    user_input = readline.question(">> ");
 
     if (user_input === "") {
         console.log("Thank you for using SupportBank.");
@@ -102,3 +138,5 @@ while (true) {
         console.log("Invalid command.");
     }
 }
+
+logger.info("Terminated program safely.");
