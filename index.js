@@ -1,4 +1,6 @@
 // Potential TODO: CSV stores currency as floats. Change implementation to use integers, so we don't lose the precision!
+// TODO: move away from Moment (depreciated, not required for bootcamp!)
+
 const moment = require("moment");
 const readline = require("readline-sync");
 const fs = require("fs");
@@ -16,8 +18,7 @@ log4js.configure({
 const logger = log4js.getLogger("SupportBank");
 logger.info("Started program.");
 
-let accounts; // name: Account(name, amount, transactions)     => can find people by name easily
-let transactions;
+let accounts = {}; // name: Account(name, amount, transactions)     => can find people by name easily
 
 class Account {
     constructor(name) {
@@ -34,15 +35,47 @@ class Transaction {
         this.to = to.name;
         this.amount = amount;
         this.narrative = narrative;
-
-        // do the transaction
-        from.amount -= amount;
-        to.amount += amount;
-
-        // update the Accounts with this transaction
-        from.transactions.push(this);
-        to.transactions.push(this);
     }
+}
+
+function do_transaction(date_string, from_string, to_string, amount_string, narrative, line_counter=-1) {
+    let from = make_account(from_string);
+    let to = make_account(to_string);
+    let amount = parseFloat(amount_string);
+
+    let line_message = "";
+    if (line_counter > 0) {
+        line_message = " (line " + (line_counter + 2) + ")";
+    }
+
+    // Is the date valid?
+    let date = moment(date_string, [moment.ISO_8601, "DD/MM/YYYY"]);
+
+    if (date && date.isValid()) {
+        date = date.format("YYYY-MM-DD");
+    } else {
+        // Log a problem and remove date
+        let message = "Invalid date: " + date + line_message + ". Removing the date.";
+        logger.error(message);
+        console.log("Error in CSV file. " + message);
+        date = "No date listed";
+    }
+
+    // Is the amount valid?
+    if (isNaN(amount) || amount < 0) {
+        // Note: line_counter + 2 => 1 for header, 1 for indexing by 1
+        let message = "Invalid amount: " + amount + line_message + ". Setting to 0.";
+        logger.error(message);
+        console.log("Error in CSV file. " + message);
+        amount = 0;
+    }
+
+    // Process the transaction
+    let transaction_object = new Transaction(date, from, to, amount, narrative);
+    from.amount -= amount;
+    to.amount += amount;
+    from.transactions.push(transaction_object);
+    to.transactions.push(transaction_object);
 }
 
 function make_account(name) {
@@ -52,60 +85,59 @@ function make_account(name) {
     return accounts[name];
 }
 
-function parse_CSV(filename) {
-    // Given a CSV file, sets up 'accounts' and 'transactions' global variables
-    accounts = {};
-    transactions = [];
+function parse_CSV(input_string) {
+    let all_transactions = [];
+    let data = input_string.split("\n");
+    let values = ["Date", "From", "To", "Narrative", "Amount"];
 
-    let data = fs.readFileSync(filename, "utf-8").trim().split("\n");
-    let values = data[0].split(",");
-
-    for (let line_counter = 1; line_counter < data.length; line_counter++) {
-        let line = data[line_counter];
-        
-        // Parse CSV to transaction
-        let transaction = {};
-        for (let row_counter = 0; row_counter < values.length; row_counter++) {
-            transaction[values[row_counter]] = line.split(",")[row_counter];
+    for (let line of data.slice(1)) {
+        // Parse CSV line to single_transaction
+        let single_transaction = {};
+        for (let column = 0; column < values.length; column++) {
+            single_transaction[values[column]] = line.split(",")[column];
         }
+        all_transactions.push(single_transaction);
+    }
 
-        // Parse transaction to Accounts / Transactions global variables
-        let date = moment(transaction["Date"], "DD-MM-YYYY");
-        let from = make_account(transaction["From"]);
-        let to = make_account(transaction["To"]);
-        let amount = parseFloat(transaction["Amount"]);
-        let narrative = transaction["Narrative"];
+    return all_transactions;
+}
 
-        // Test for validity (log if not)
+function parse_JSON(input_string) {
+    // Note: Some inconsistent names. Regex: FromAccount => From; ToAccount => To.
+    let data = input_string.replace(/(From|To)Account/g, "$1");
+    return JSON.parse(data);
+}
 
-        if (!date.isValid()) {
-            let message = "Invalid date: " + date + " (line " + (line_counter + 1) + "). Removing the date.";
-            logger.error(message);
-            console.log("Error in CSV file. " + message);
-            date = "No date listed.";
-        } else {
-            date = date.format("YYYY-MM-DD");
-        }
+function parse_file(filename, wipe=true) {
+    let data = fs.readFileSync(filename, "utf-8").trim()
 
-        if (isNaN(amount) || amount < 0) {
-            let message = "Invalid amount: " + amount + " (line " + (line_counter + 1) + "). Setting to 0.";
-            logger.error(message);
-            console.log("Error in CSV file. " + message);
-            amount = 0;
-        }
+    // Convert file to array of objects
+    let all_transactions = [];
+    if (filename.endsWith(".csv")) {
+        logger.info("Parsing CSV.");
+        all_transactions = parse_CSV(data);
+    } else if (filename.endsWith(".json")) {
+        logger.info("Parsing JSON.");
+        all_transactions = parse_JSON(data);
+    } else {
+        logger.error("Unknown file type: " + filename);
+        console.log("Unknown file type. Please use either a CSV or a JSON.");
+        return;
+    }
 
-        transactions.push(new Transaction(date, from, to, amount, narrative));
-
+    // Parse all_transactions to 'accounts' global variable
+    if (wipe) { // assume wipe on import, to help with testing. change default value or specify bool if not wanted.
+        accounts = {};
+    }
+    for (let line_counter = 0; line_counter < all_transactions.length; line_counter++) {
+        let line = all_transactions[line_counter];
+        do_transaction(line["Date"], line["From"], line["To"], line["Amount"], line["Narrative"], line_counter + 2); // +2: 1 for header, 1 for one-indexing
     }
 }
 
 // Main program
-logger.info("Started parsing CSV.");
-parse_CSV("DodgyTransactions2015.csv");
-logger.info("Finished parsing CSV.");
-
 let user_input = " ";
-console.log("Usage: 'List <Account>' or 'List All' or enter a blank string to exit.");
+console.log("Usage: 'Import File <File Name>' or 'List <Account>' or 'List All' or enter a blank string to exit.");
 while (true) {
     user_input = readline.question(">> ");
 
@@ -114,8 +146,12 @@ while (true) {
         break;
 
     } else if (user_input === "List All") {
-        for (let name in accounts) {
-            console.log(name + ": " + accounts[name].amount.toFixed(2));
+        if (accounts) {
+            for (let name in accounts) {
+                console.log(name + ": " + accounts[name].amount.toFixed(2));
+            }
+        } else {
+            console.log("Please import a file first.");
         }
 
     } else if (user_input.startsWith("List ")) {
@@ -134,6 +170,8 @@ while (true) {
             console.log("Not a valid user!");
         }
 
+    } else if (user_input.startsWith("Import File ")) {
+        parse_file(user_input.slice(12));
     } else {
         console.log("Invalid command.");
     }
