@@ -39,6 +39,13 @@ class Transaction {
     }
 }
 
+function make_account(name) {
+    if (!(name in accounts)) {
+        accounts[name] = new Account(name);
+    }
+    return accounts[name];
+}
+
 function do_transaction(date_string, from_string, to_string, amount_string, narrative, line_counter=-1) {
     let from = make_account(from_string);
     let to = make_account(to_string);
@@ -76,13 +83,6 @@ function do_transaction(date_string, from_string, to_string, amount_string, narr
     to.amount += amount;
     from.transactions.push(transaction_object);
     to.transactions.push(transaction_object);
-}
-
-function make_account(name) {
-    if (!(name in accounts)) {
-        accounts[name] = new Account(name);
-    }
-    return accounts[name];
 }
 
 function parse_CSV(input_string) {
@@ -203,6 +203,10 @@ while (true) {
 
     } else if (user_input.startsWith("Import File ")) {
         parse_file(user_input.slice(12));
+
+    } else if (user_input.startsWith("Export File ")) {
+        export_file(user_input.slice(12));
+
     } else {
         console.log("Invalid command.");
     }
