@@ -119,7 +119,7 @@ function parse_XML(input_string) {
     let result = [];
     for (let transaction of data) {
         result.push({
-            "Date": moment.unix(parseInt(transaction["@_Date"], 10) * 86400).format("YYYY-MM-DD"),
+            "Date": moment("1900-01-01", "YYYY-MM-DD").add(transaction["@_Date"], "days").format("YYYY-MM-DD"),
             "From": transaction["Parties"]["From"],
             "To": transaction["Parties"]["To"],
             "Amount": transaction["Value"],
