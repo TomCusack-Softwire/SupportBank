@@ -177,12 +177,12 @@ while (true) {
         break;
 
     } else if (user_input === "List All") {
-        if (accounts) {
+        if (Object.keys(accounts).length === 0) {
+            console.log("Please import a file first.");
+        } else {
             for (let name in accounts) {
                 console.log(name + ": " + accounts[name].amount.toFixed(2));
             }
-        } else {
-            console.log("Please import a file first.");
         }
 
     } else if (user_input.startsWith("List ")) {
