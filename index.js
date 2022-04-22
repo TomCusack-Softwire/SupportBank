@@ -20,6 +20,7 @@ const logger = log4js.getLogger("SupportBank");
 logger.info("Started program.");
 
 let accounts = {}; // name: Account(name, amount, transactions)     => can find people by name easily
+let all_transactions = [];
 
 class Account {
     constructor(name) {
@@ -96,6 +97,7 @@ function parse_CSV(input_string) {
         for (let column = 0; column < values.length; column++) {
             single_transaction[values[column]] = line.split(",")[column];
         }
+        single_transaction["Date"] = moment(single_transaction["Date"], [moment.ISO_8601, "DD-MM-YYYY"]).format("YYYY-MM-DD");
         all_transactions.push(single_transaction);
     }
 
@@ -103,8 +105,9 @@ function parse_CSV(input_string) {
 }
 
 function parse_JSON(input_string) {
-    // Note: Some inconsistent names. Regex: FromAccount => From; ToAccount => To.
-    let data = input_string.replace(/(From|To)Account/g, "$1");
+    // Note: Some inconsistent names. Regex: FromAccount => From; ToAccount => To. Also format datestring properly
+    let data = input_string.replace(/(From|To)Account/g, "$1").replace(/T00:00:00/g, "");
+
     return JSON.parse(data);
 }
 
@@ -117,12 +120,18 @@ function parse_XML(input_string) {
     // format with right column names
     let result = [];
     for (let transaction of data) {
+        let date = transaction["@_Date"];
+        if (isNaN(parseInt(date, 10))) {
+            date = moment(date, [moment.ISO_8601, "DD-MM-YYYY"]);
+        } else {
+            date = moment("1900-01-01", "YYYY-MM-DD").add(date, "days");
+        }
         result.push({
-            "Date": moment("1900-01-01", "YYYY-MM-DD").add(transaction["@_Date"], "days").format("YYYY-MM-DD"),
+            "Date": date.format("YYYY-MM-DD"),
             "From": transaction["Parties"]["From"],
             "To": transaction["Parties"]["To"],
-            "Amount": transaction["Value"],
             "Narrative": transaction["Description"],
+            "Amount": transaction["Value"],
         });
     }
 
@@ -130,25 +139,31 @@ function parse_XML(input_string) {
 }
 
 function parse_file(filename, wipe=true) {
+    // Assume wipe on import, to help with testing. change default value or specify bool if not wanted.
+    if (wipe) {
+        accounts = {};
+        all_transactions = [];
+    }
+
     let data;
     try {
         data = fs.readFileSync(filename, "utf-8").trim();
     } catch (error) {
+        logger.error(error);
         console.log("There was an error trying to read file: " + filename);
         return;
     }
 
-    // Convert file to array of objects
-    let all_transactions = [];
+    // Convert file to array of objects ('all_transactions' global variable)
     if (filename.endsWith(".csv")) {
         logger.info("Parsing CSV.");
-        all_transactions = parse_CSV(data);
+        all_transactions = all_transactions.concat(parse_CSV(data));
     } else if (filename.endsWith(".json")) {
         logger.info("Parsing JSON.");
-        all_transactions = parse_JSON(data);
+        all_transactions = all_transactions.concat(parse_JSON(data));
     } else if (filename.endsWith(".xml")) {
         logger.info("Parsing XML.");
-        all_transactions = parse_XML(data);
+        all_transactions = all_transactions.concat(parse_XML(data));
     } else {
         logger.error("Unknown file type for file: " + filename);
         console.log("Unknown file type. Please use either CSV, JSON, XML.");
@@ -156,18 +171,76 @@ function parse_file(filename, wipe=true) {
     }
 
     // Parse all_transactions to 'accounts' global variable
-    if (wipe) { // assume wipe on import, to help with testing. change default value or specify bool if not wanted.
-        accounts = {};
-    }
     for (let line_counter = 0; line_counter < all_transactions.length; line_counter++) {
         let line = all_transactions[line_counter];
         do_transaction(line["Date"], line["From"], line["To"], line["Amount"], line["Narrative"], line_counter + 2); // +2: 1 for header, 1 for one-indexing
     }
 }
 
+function export_file(filename) {
+    let string_data;
+    if (filename.endsWith(".json")) {
+        string_data = JSON.stringify(all_transactions, (key, value) => {
+            if (key === "Amount") {
+                return parseFloat(value);
+            } else if (key === "Date") {
+                return value;
+            }
+            return value;
+        }, 2);
+        string_data = string_data.replace(/"(From|To)": /g, "\"$1Account\": ");
+
+    } else if (filename.endsWith(".csv")) {
+        string_data = "Date,From,To,Narrative,Amount\n";
+        for (let line of all_transactions) {
+            string_data += line["Date"] + "," + line["From"] + "," + line["To"] + "," + line["Narrative"] + "," + line["Amount"] + "\n";
+        }
+
+    } else if (filename.endsWith(".xml")) {
+        // sort out structure so XMLBuilder can take it easily
+        let structure = {"TransactionList": {"SupportTransaction": []}};
+        for (let transaction of all_transactions) {
+            structure["TransactionList"]["SupportTransaction"].push({
+                "@_Date": transaction["Date"],
+                "Description": transaction["Narrative"],
+                "Value": transaction["Amount"],
+                "Parties": {
+                    "From": transaction["From"],
+                    "To": transaction["To"],
+                }
+            });
+        }
+
+        let builder = new fast_xml_parser.XMLBuilder({
+            "ignoreAttributes": false,
+            "format": true
+        });
+        string_data = '<?xml version="1.0" encoding="utf-8"?>\n' + builder.build(structure);
+
+    } else {
+        logger.error("Unknown file type for file: " + filename);
+        console.log("Unknown file type. Please use either CSV, JSON, XML.");
+        return;
+    }
+
+    try {
+        fs.writeFileSync(filename, string_data);
+    } catch (error) {
+        logger.error(error);
+        console.log("There was an error writing to file: " + filename + " (is it open currently?)");
+        // return;
+    }
+}
+
 // Main program
+console.log(`Commands:
+    Import File <File Name>
+    Export File <File Name>
+    List <Account>
+    List All
+Submit a blank string (nothing) to exit.`);
+
 let user_input = " ";
-console.log("Usage: 'Import File <File Name>' or 'List <Account>' or 'List All' or enter a blank string to exit.");
 while (true) {
     user_input = readline.question(">> ");
     logger.info("User input: " + user_input);
@@ -180,8 +253,8 @@ while (true) {
         if (Object.keys(accounts).length === 0) {
             console.log("Please import a file first.");
         } else {
-            for (let name in accounts) {
-                console.log(name + ": " + accounts[name].amount.toFixed(2));
+            for (let account of accounts) {
+                console.log(account.name + ": " + account.amount.toFixed(2));
             }
         }
 
