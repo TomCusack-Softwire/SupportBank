@@ -5,6 +5,7 @@ const moment = require("moment");
 const readline = require("readline-sync");
 const fs = require("fs");
 const log4js = require("log4js");
+const fast_xml_parser = require("fast-xml-parser");
 
 log4js.configure({
     appenders: {
@@ -108,8 +109,35 @@ function parse_JSON(input_string) {
     return JSON.parse(data);
 }
 
+function parse_XML(input_string) {
+    let parser = new fast_xml_parser.XMLParser({
+        "ignoreAttributes": false
+    });
+    let data = parser.parse(input_string)["TransactionList"]["SupportTransaction"];
+
+    // format with right column names
+    let result = [];
+    for (let transaction of data) {
+        result.push({
+            "Date": moment.unix(parseInt(transaction["@_Date"], 10) * 86400).format("YYYY-MM-DD"),
+            "From": transaction["Parties"]["From"],
+            "To": transaction["Parties"]["To"],
+            "Amount": transaction["Value"],
+            "Narrative": transaction["Description"],
+        });
+    }
+
+    return result;
+}
+
 function parse_file(filename, wipe=true) {
-    let data = fs.readFileSync(filename, "utf-8").trim()
+    let data;
+    try {
+        data = fs.readFileSync(filename, "utf-8").trim();
+    } catch (error) {
+        console.log("There was an error trying to read file: " + filename);
+        return;
+    }
 
     // Convert file to array of objects
     let all_transactions = [];
@@ -119,9 +147,12 @@ function parse_file(filename, wipe=true) {
     } else if (filename.endsWith(".json")) {
         logger.info("Parsing JSON.");
         all_transactions = parse_JSON(data);
+    } else if (filename.endsWith(".xml")) {
+        logger.info("Parsing XML.");
+        all_transactions = parse_XML(data);
     } else {
-        logger.error("Unknown file type: " + filename);
-        console.log("Unknown file type. Please use either a CSV or a JSON.");
+        logger.error("Unknown file type for file: " + filename);
+        console.log("Unknown file type. Please use either CSV, JSON, XML.");
         return;
     }
 
@@ -140,6 +171,7 @@ let user_input = " ";
 console.log("Usage: 'Import File <File Name>' or 'List <Account>' or 'List All' or enter a blank string to exit.");
 while (true) {
     user_input = readline.question(">> ");
+    logger.info("User input: " + user_input);
 
     if (user_input === "") {
         console.log("Thank you for using SupportBank.");
