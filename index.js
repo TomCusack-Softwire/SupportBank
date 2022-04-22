@@ -46,7 +46,7 @@ function do_transaction(date_string, from_string, to_string, amount_string, narr
 
     let line_message = "";
     if (line_counter > 0) {
-        line_message = " (line " + (line_counter + 2) + ")";
+        line_message = " (line " + line_counter + ")";
     }
 
     // Is the date valid?
@@ -64,7 +64,6 @@ function do_transaction(date_string, from_string, to_string, amount_string, narr
 
     // Is the amount valid?
     if (isNaN(amount) || amount < 0) {
-        // Note: line_counter + 2 => 1 for header, 1 for indexing by 1
         let message = "Invalid amount: " + amount + line_message + ". Setting to 0.";
         logger.error(message);
         console.log("Error in CSV file. " + message);
